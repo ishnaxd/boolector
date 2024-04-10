@@ -1,88 +1,112 @@
-#****************************************************************************
-#* setup.py for PyBoolector
-#****************************************************************************
-import os
-import sys
-from setuptools import setup
-from distutils.extension import Extension
+#!/usr/bin/env bash
+set -e -o pipefail
 
-if "PACKAGE_BUILD" in os.environ.keys() and os.environ["PACKAGE_BUILD"] != "":
-    print("*******************************************************************")
-    print("* WARNING: Building the PyBoolector Python extension from source   ")
-    print("* WARNING: In general, this should not happen on Linux or macOS ")
-    print("* WARNING: Windows is not supported, and will result in a fatal error")
-    print("* ")
-    print("*******************************************************************")
+mkdir -p ./build
+cd ./build
 
-basedir = os.path.dirname(os.path.abspath(__file__))
+echo "Hello from PyPi build.sh"
 
-version="3.2.3"
-if os.path.isfile(os.path.join(basedir, "version.txt")):
-    with open(os.path.join(basedir, "version.txt")) as fp:
-        version = fp.read()
-        version = version.strip()
+BUILD_DIR=`pwd`
+N_CORES=`nproc`
 
-if "BUILD_NUM" in os.environ.keys():
-    version += ".%s" % os.environ["BUILD_NUM"]
+#test -n "$PYTHON_VERSIONS" || { echo PYTHON_VERSIONS must be set.; exit 1; }
 
-# Static builds on macOS require specifying all archives
-# Dynamic builds on other platforms don't
-if sys.platform == "darwin":
-    libraries=['boolector', 'btor2parser', 'cadical', 'lgl']
-else:
-    libraries=['boolector']
+echo "copy start"
 
-ext = Extension("pyboolector",
-            sources=[
-                'src/pyboolector.pyx',
-                'src/pyboolector_abort.cpp',
-                'src/boolector_py.c',
-            ],
-            language="c++",
-            include_dirs=[
-                '/usr/include/boolector',
-                os.path.join(basedir, 'src')
-            ],
-            libraries=libraries
-        )
-ext.cython_directives={'language_level' : '3'}
+cp -r ../boolector .
 
-CLASSIFIERS = [
-    "Development Status :: 5 - Production/Stable",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-    "Programming Language :: Python",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.7",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: Implementation :: CPython",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-]
+echo "copy end"
 
-setup(
-  name='PyBoolector',
-  version=version,
-  maintainer = "Matthew Ballance",
-  maintainer_email = "matt.ballance@gmail.com",
-  description = ("Python wrapper around the Boolector SMT solver"),
-  long_description="""
-    This package, specifically, enables the Boolector Python wrapper
-    to be installed from PyPi
-  """,
-  licenses = ["MIT License"],
-  download_url="https://pypi.org/project/PyBoolector/",
-  url="https://github.com/boolector/boolector",
-  setup_requires=[
-    'setuptools_scm',
-    'cython'
-  ],
-  ext_modules=[ ext ],
-  classifiers=CLASSIFIERS
-)
+# Setup dependencies
+cd boolector
+#/bin/sh ./contrib/setup-btor2tools.sh
+#/bin/sh ./contrib/setup-cadical.sh
+#/bin/sh ./contrib/setup-lingeling.sh
+./contrib/setup-btor2tools.sh
+./contrib/setup-cadical.sh
+./contrib/setup-lingeling.sh
 
+#********************************************************************
+#* boolector
+#********************************************************************
+cd ${BUILD_DIR}
 
+cd boolector
+
+#./configure.sh --python --shared --prefix output
+./configure.sh --python --shared --prefix /usr/local
+cd build
+
+echo "make"
+
+make -j${N_CORES}
+
+make install
+
+#********************************************************************
+#* pyboolector
+#********************************************************************
+
+cd ${BUILD_DIR}
+rm -rf pyboolector
+
+export CC=gcc
+export CXX=g++
+
+# Specify path to CmakeLists.txt so setup.py can extract the version
+export CMAKELISTS_TXT=${BUILD_DIR}/boolector/CMakeLists.txt
+
+cp -r ${BUILD_DIR}/boolector/pypi pyboolector
+
+# Prepare the artifact directory.
+rm -rf ${BUILD_DIR}/boolector/result
+mkdir -p ${BUILD_DIR}/boolector/result
+
+# Grab the main license file
+cp ${BUILD_DIR}/boolector/COPYING pyboolector/LICENSE
+
+cd pyboolector
+
+#for py in $PYTHON_VERSIONS; do
+#  python=$(ls /opt/python/${py}-*/bin/python)
+#  echo "Python: ${python}"
+#  ${python} -m pip install cython wheel
+#  cd ${BUILD_DIR}/pyboolector
+#  rm -rf src
+#  cp -r ${BUILD_DIR}/boolector/src/api/python src
+#  sed -i -e 's/override//g' \
+#     -e 's/noexcept/_GLIBCXX_USE_NOEXCEPT/g' \
+#     -e 's/\(BoolectorException (const.*\)/\1\n    virtual ~BoolectorException() _GLIBCXX_USE_NOEXCEPT {}/' \
+#       src/pyboolector_abort.cpp
+#  mkdir -p src/utils
+#  cp ${BUILD_DIR}/boolector/src/*.h src
+#  cp ${BUILD_DIR}/boolector/src/utils/*.h src/utils
+#  $python ./src/mkenums.py ./src/btortypes.h ./src/pyboolector_enums.pxd
+#  $python setup.py sdist bdist_wheel
+#done
+
+echo "python"
+
+  python=/usr/bin/pypy
+  echo "Python: ${python}"
+  ${python} -m pip install cython wheel
+  cd ${BUILD_DIR}/pyboolector
+  rm -rf src
+  cp -r ${BUILD_DIR}/boolector/src/api/python src
+  sed -i -e 's/override//g' \
+     -e 's/noexcept/_GLIBCXX_USE_NOEXCEPT/g' \
+     -e 's/\(BoolectorException (const.*\)/\1\n    virtual ~BoolectorException() _GLIBCXX_USE_NOEXCEPT {}/' \
+       src/pyboolector_abort.cpp
+  mkdir -p src/utils
+  cp ${BUILD_DIR}/boolector/src/*.h src
+  cp ${BUILD_DIR}/boolector/src/utils/*.h src/utils
+  $python ./src/mkenums.py ./src/btortypes.h ./src/pyboolector_enums.pxd
+  $python setup.py sdist bdist_wheel
+
+# Copy the source distribution into the artifact directory.
+cp dist/*.tar.gz ${BUILD_DIR}/boolector/result
+
+# Repair wheels and place them into the artifact directory.
+for whl in dist/*.whl; do
+  auditwheel repair --plat manylinux_2_24_x86_64 --wheel-dir ${BUILD_DIR}/boolector/result/dist $whl
+done
